@@ -1,0 +1,485 @@
+Oahu Surf Forecast System: Revised Project Specification
+System Overview
+This project implements a multi-agent AI system using OpenAI's Assistants API to generate comprehensive 10-day surf and wind forecasts for Oahu's north and south shores. The system leverages GPT-4.1 for critical forecasting components and GPT-4.1 Nano for support functions, with an emphasis on using AI to handle data processing and discrepancies across different sources.
+Key Implementation Requirements
+Assistants API Implementation
+
+CRITICAL: This project primarily uses OpenAI's Assistants API, not direct completions API calls
+Each agent is implemented as a persistent Assistant with specialized instructions
+All file processing leverages the Assistants API file handling capabilities
+Inter-agent communication occurs through threads and messages
+
+Data Handling Philosophy
+
+Allow AI models to directly process raw data with minimal pre-processing
+Let AI models handle discrepancies between data sources through reasoning
+Use configurable data sources provided by user in config.ini
+
+Architecture
+                  ┌─────────────────┐
+                  │ Orchestrator    │
+                  │ (Main Controller)│
+                  └─────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+┌────────▼─────────┐ ┌─────▼──────────┐ ┌────▼────────────┐
+│ Data Collection  │ │ Data Assessment│ │ Forecast        │
+│ Agents           │ │ Agent          │ │ Engine          │
+└────────┬─────────┘ └─────┬──────────┘ └────┬────────────┘
+         │                 │                 │
+┌────────▼─────────┐ ┌─────▼──────────┐ ┌────▼────────────┐
+│ - Buoy Agent     │ │ - Source Consistency │ - Forecaster   │
+│ - Satellite Agent│ │   Agent      │ │  (GPT-4.1)     │
+│ - Model Agent    │ │                │ └────┬────────────┘
+│ - Weather Agent  │ └──────────────────┘      │
+└──────────────────┘                      ┌────▼────────────┐
+                                         │ - Critic Agent   │
+                                         │  (GPT-4.1)       │
+                                         └──────────────────┘
+Implementation Details
+1. Assistants API Implementation
+python# Example of creating an assistant using the Assistants API
+def create_forecaster_assistant(client, prompt):
+    assistant = client.beta.assistants.create(
+        name="Surf Forecaster",
+        model="gpt-4.1",
+        instructions=prompt,
+        tools=[{"type": "file_search"}]  # Enable file operations
+    )
+    return assistant
+    
+# Example of creating a thread and running an assistant
+def run_forecaster(client, assistant_id, thread_id, file_ids, query):
+    # Add files and message to thread
+    client.beta.threads.messages.create(
+        thread_id=thread_id,
+        role="user",
+        content=query,
+        file_ids=file_ids  # Attach data files
+    )
+    
+    # Run the assistant
+    run = client.beta.threads.runs.create(
+        thread_id=thread_id,
+        assistant_id=assistant_id
+    )
+    
+    # Wait for completion (implement proper polling/waiting)
+    # ...
+    
+    # Get results
+    messages = client.beta.threads.messages.list(thread_id=thread_id)
+    return messages.data[0].content
+2. Orchestrator
+
+Implementation: Python class managing assistants, threads, and file handling
+Key Functions:
+pythondef initialize_assistants():
+    """Create all required assistants with appropriate instructions"""
+    
+def orchestrate_forecast_process():
+    """Main workflow coordination function"""
+    
+def manage_thread_communication(source_thread, target_assistant, message):
+    """Transfer insights between agents"""
+
+Logging: Implements three distinct logging levels with OpenAI API request/response capture
+
+3. Data Collection System
+
+Implementation: Each source has a dedicated collection script that:
+
+Downloads raw data from user-provided URLs in config.ini
+Saves to local storage with minimal preprocessing
+Creates appropriate metadata for AI processing
+
+
+Output: Raw HTML, images, JSON, and text data stored locally
+
+4. AI-Driven Data Assessment
+
+Purpose: Analyze raw collected data for consistency and format issues
+Implementation: GPT-4.1 Nano assistant that:
+
+Examines all data sources
+Identifies inconsistencies between sources
+Creates a summary of data quality and reliability
+Flags potential issues for forecaster attention
+
+
+
+5. Forecast Engine Implementation
+
+Forecaster Assistant:
+python# Create specialized forecaster
+forecaster = client.beta.assistants.create(
+    name="Surf Forecaster",
+    instructions=config['prompts']['forecaster_prompt'],
+    model="gpt-4.1",
+    tools=[{"type": "file_search"}]
+)
+
+# Create thread with all processed data files
+forecast_thread = client.beta.threads.create()
+
+# Attach all data files
+for file_path in data_files:
+    file = client.files.create(file=open(file_path, "rb"), purpose="assistants")
+    file_ids.append(file.id)
+
+# Run initial forecast generation
+client.beta.threads.messages.create(
+    thread_id=forecast_thread.id,
+    role="user",
+    content="Generate preliminary 10-day forecast for North Shore",
+    file_ids=file_ids
+)
+
+Critic Assistant:
+python# Create critic with specialized instructions
+critic = client.beta.assistants.create(
+    name="Forecast Critic",
+    instructions=config['prompts']['critic_prompt'],
+    model="gpt-4.1"
+)
+
+# Extract forecast from forecast thread
+forecast_content = get_last_assistant_message(forecast_thread.id)
+
+# Create critique thread
+critique_thread = client.beta.threads.create()
+
+# Submit forecast for critique
+client.beta.threads.messages.create(
+    thread_id=critique_thread.id,
+    role="user",
+    content=f"Review this surf forecast:\n\n{forecast_content}"
+)
+
+Refinement Process:
+python# Get critique from critic
+critique = get_last_assistant_message(critique_thread.id)
+
+# Send critique back to forecaster for refinement
+client.beta.threads.messages.create(
+    thread_id=forecast_thread.id,
+    role="user",
+    content=f"Refine your forecast based on this critique:\n\n{critique}"
+)
+
+
+Configuration Details
+Enhanced config.ini with focus on user-provided data sources:
+ini[general]
+output_directory = ./output
+data_directory = ./data
+log_level = INFO  # INFO, VERBOSE, DEBUG
+forecast_days = 10
+shores = North Shore, South Shore
+refinement_cycles = 2  # Number of forecast-critique cycles
+
+[openai]
+api_key = your_api_key_here
+organization = your_org_id  # Optional
+forecasting_model = gpt-4.1
+support_model = gpt-4.1-nano
+max_tokens = 4000
+temperature = 0.2
+
+[data_sources]
+# User can provide their own sources here
+buoy_urls = https://www.ndbc.noaa.gov/station_page.php?station=51201, https://www.ndbc.noaa.gov/station_page.php?station=51202
+satellite_urls = https://www.nhc.noaa.gov/satellite.php
+model_urls = https://www.pacioos.hawaii.edu/waves/model-hawaii/
+weather_station_urls = https://www.weather.gov/hfo/
+custom_data_directory = ./custom_data  # For user-provided files
+
+[assistants]
+# Persistence settings for assistants
+save_assistant_ids = true
+assistants_file = ./config/assistants.json
+
+[prompts]
+data_assessment_prompt = You are a data quality analyst specializing in meteorological and oceanographic data. Examine all provided data sources for inconsistencies, missing data, and reliability issues. Create a summary report highlighting potential problems that might affect forecast accuracy. Pay special attention to contradictions between different data sources.
+
+forecaster_prompt = You are an expert surf forecaster for Hawaii, similar in style and accuracy to Pat Caldwell. Analyze the provided weather and ocean data to create a detailed 10-day surf forecast for {shore}. Include swell height (Hawaiian scale), direction, period, wind conditions, and tide effects. For each day, provide morning and afternoon conditions separately. Explain the meteorological reasoning behind each prediction. When sources conflict, explain your reasoning for preferring one source over another.
+
+critic_prompt = You are a critical meteorologist and oceanographer reviewing surf forecasts. Examine this forecast for logical errors, physical inconsistencies, or implausible predictions. Challenge assumptions about swell propagation, local effects, and weather patterns. Consider whether the forecast properly accounts for island shadowing, refraction, local wind effects, and tide interactions. Your goal is to improve forecast accuracy through rigorous questioning.
+
+refinement_prompt = Consider this critique of your forecast. Revise your predictions where appropriate, explaining your reasoning for any changes or defenses of your original forecast. Be specific about which aspects you're adjusting and why. If maintaining your original prediction despite criticism, provide additional evidence or reasoning to support it.
+
+[output_format]
+template_file = ./templates/forecast_template.md
+include_visuals = true
+Technical Implementation
+Python Structure with Assistants API Focus
+python# main.py example with Assistants API implementation
+import os
+import time
+import logging
+from openai import OpenAI
+from configparser import ConfigParser
+
+# Load configuration
+config = ConfigParser()
+config.read('config.ini')
+
+# Initialize API client
+client = OpenAI(api_key=config['openai']['api_key'])
+
+# Set up logging based on config
+log_level = getattr(logging, config['general']['log_level'])
+logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('surf_forecast')
+
+# Create special debug logger for API communications
+if config['general']['log_level'] == 'DEBUG':
+    api_logger = logging.getLogger('openai_api')
+    api_logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler('api_debug.log')
+    api_logger.addHandler(handler)
+    
+    # Monkey patch or wrap OpenAI client to log all API calls
+    original_post = client.http_client.post
+    def logging_post(*args, **kwargs):
+        api_logger.debug(f"REQUEST: {args}, {kwargs}")
+        response = original_post(*args, **kwargs)
+        api_logger.debug(f"RESPONSE: {response}")
+        return response
+    client.http_client.post = logging_post
+
+# Assistants creation with persistence
+def create_or_load_assistants():
+    """Create assistants or load from config file if persistence enabled"""
+    assistants = {}
+    
+    if config['assistants'].getboolean('save_assistant_ids'):
+        try:
+            with open(config['assistants']['assistants_file'], 'r') as f:
+                import json
+                assistants = json.load(f)
+                logger.info(f"Loaded {len(assistants)} assistants from file")
+                return assistants
+        except (FileNotFoundError, json.JSONDecodeError):
+            logger.info("No valid assistants file found, creating new assistants")
+    
+    # Create forecaster assistant
+    assistants['forecaster'] = client.beta.assistants.create(
+        name="Surf Forecaster",
+        instructions=config['prompts']['forecaster_prompt'].format(shore="North Shore"),
+        model=config['openai']['forecasting_model'],
+        tools=[{"type": "file_search"}]
+    ).id
+    
+    # Create critic assistant
+    assistants['critic'] = client.beta.assistants.create(
+        name="Forecast Critic",
+        instructions=config['prompts']['critic_prompt'],
+        model=config['openai']['forecasting_model']
+    ).id
+    
+    # Create data assessment assistant
+    assistants['data_assessment'] = client.beta.assistants.create(
+        name="Data Assessment",
+        instructions=config['prompts']['data_assessment_prompt'],
+        model=config['openai']['support_model'],
+        tools=[{"type": "file_search"}]
+    ).id
+    
+    # Save assistants if persistence enabled
+    if config['assistants'].getboolean('save_assistant_ids'):
+        os.makedirs(os.path.dirname(config['assistants']['assistants_file']), exist_ok=True)
+        with open(config['assistants']['assistants_file'], 'w') as f:
+            import json
+            json.dump(assistants, f)
+    
+    return assistants
+
+# Helper function to wait for assistant run completion
+def wait_for_run(thread_id, run_id):
+    """Poll run status until complete"""
+    while True:
+        run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run_id)
+        if run.status == 'completed':
+            return run
+        elif run.status in ['failed', 'cancelled', 'expired']:
+            raise Exception(f"Run {run_id} {run.status}: {run.last_error}")
+        logger.debug(f"Run {run_id} status: {run.status}")
+        time.sleep(1)
+
+# Get last assistant message from thread
+def get_last_assistant_message(thread_id):
+    """Retrieve the most recent assistant message from a thread"""
+    messages = client.beta.threads.messages.list(thread_id=thread_id, order="desc")
+    for message in messages.data:
+        if message.role == "assistant":
+            # Extract text content from message
+            content_text = ""
+            for content in message.content:
+                if content.type == "text":
+                    content_text += content.text.value
+            return content_text
+    return None
+
+# Main forecast process with critique cycles
+def generate_forecast(shore, data_files, assistants):
+    """Generate complete forecast with refinement cycles"""
+    logger.info(f"Starting forecast generation for {shore}")
+    
+    # Upload files
+    file_ids = []
+    for file_path in data_files:
+        file = client.files.create(file=open(file_path, "rb"), purpose="assistants")
+        file_ids.append(file.id)
+        logger.debug(f"Uploaded {file_path} with ID {file.id}")
+    
+    # Create thread for forecaster
+    forecast_thread = client.beta.threads.create()
+    logger.info(f"Created forecast thread {forecast_thread.id}")
+    
+    # Initial forecast generation
+    client.beta.threads.messages.create(
+        thread_id=forecast_thread.id,
+        role="user",
+        content=f"Generate a detailed 10-day surf forecast for {shore}",
+        file_ids=file_ids
+    )
+    
+    run = client.beta.threads.runs.create(
+        thread_id=forecast_thread.id,
+        assistant_id=assistants['forecaster']
+    )
+    
+    wait_for_run(forecast_thread.id, run.id)
+    initial_forecast = get_last_assistant_message(forecast_thread.id)
+    
+    # Refinement cycles
+    for cycle in range(int(config['general']['refinement_cycles'])):
+        logger.info(f"Starting refinement cycle {cycle+1}")
+        
+        # Create critique thread
+        critique_thread = client.beta.threads.create()
+        
+        # Submit forecast for critique
+        client.beta.threads.messages.create(
+            thread_id=critique_thread.id,
+            role="user",
+            content=f"Review this surf forecast critically:\n\n{initial_forecast}"
+        )
+        
+        critique_run = client.beta.threads.runs.create(
+            thread_id=critique_thread.id,
+            assistant_id=assistants['critic']
+        )
+        
+        wait_for_run(critique_thread.id, critique_run.id)
+        critique = get_last_assistant_message(critique_thread.id)
+        
+        # Send critique to forecaster for refinement
+        client.beta.threads.messages.create(
+            thread_id=forecast_thread.id,
+            role="user",
+            content=f"Refine your forecast based on this critique:\n\n{critique}"
+        )
+        
+        refinement_run = client.beta.threads.runs.create(
+            thread_id=forecast_thread.id,
+            assistant_id=assistants['forecaster']
+        )
+        
+        wait_for_run(forecast_thread.id, refinement_run.id)
+        initial_forecast = get_last_assistant_message(forecast_thread.id)
+    
+    # Return final forecast
+    return initial_forecast
+
+# Main execution
+if __name__ == "__main__":
+    # Create or load assistants
+    assistants = create_or_load_assistants()
+    
+    # Process data sources (simplified for brevity)
+    # In full implementation, this would call data collection modules
+    
+    # Generate forecasts for each shore
+    shores = config['general']['shores'].split(',')
+    for shore in shores:
+        shore = shore.strip()
+        data_files = [f for f in os.listdir(config['general']['data_directory']) if f.endswith('.json') or f.endswith('.txt') or f.endswith('.jpg')]
+        data_file_paths = [os.path.join(config['general']['data_directory'], f) for f in data_files]
+        
+        forecast = generate_forecast(shore, data_file_paths, assistants)
+        
+        # Save forecast to output directory
+        os.makedirs(config['general']['output_directory'], exist_ok=True)
+        with open(os.path.join(config['general']['output_directory'], f"{shore.replace(' ', '_')}_forecast.md"), 'w') as f:
+            f.write(forecast)
+        
+        logger.info(f"Completed forecast for {shore}")
+Additional Clarifications
+
+File Handling with Assistants API:
+
+Files are uploaded once using client.files.create()
+The same file IDs can be reused across multiple assistants
+Files remain accessible until explicitly deleted
+
+
+Thread Management:
+
+Each forecast generation creates new threads
+Threads persist during the forecast generation process
+Consider implementing thread cleanup after completion
+
+
+Error Handling:
+
+Implement robust retry logic for API rate limits
+Create fallback strategies for missing data sources
+Log all API interactions in debug mode
+
+
+Data Source Flexibility:
+
+System designed to allow you to provide your own data sources via config
+AI will handle inconsistencies and data format variations
+Consider providing a structure for custom data sources
+
+
+
+Development Roadmap
+
+Setup & Configuration (Days 1-2)
+
+Create project structure
+Implement configuration management
+Set up logging system with verbose/debug modes
+
+
+Assistants API Integration (Days 3-5)
+
+Implement assistant creation/persistence
+Build thread and message handling
+Create file upload system
+
+
+Data Collection (Days 6-8)
+
+Implement URL fetching for data sources
+Create data storage system
+Build metadata tagging for AI processing
+
+
+Forecasting Engine (Days 9-12)
+
+Implement forecaster/critic workflow
+Create refinement cycle system
+Build output formatting
+
+
+Testing & Refinement (Days 13-15)
+
+End-to-end testing
+Performance optimization
+Documentation

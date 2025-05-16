@@ -1,0 +1,51 @@
+[general]
+output_directory = ./output
+data_directory = ./data
+log_level = INFO  # INFO, VERBOSE, DEBUG
+forecast_days = 10
+shores = North Shore, South Shore
+refinement_cycles = 2  # Number of forecast-critique cycles
+
+[openai]
+api_key = your_openai_api_key_here
+organization =  # Optional
+forecasting_model = gpt-4.1
+support_model = gpt-4.1-nano
+max_tokens = 4000
+temperature = 0.2
+
+[data_sources]
+# User can provide their own sources here
+buoy_urls = https://www.ndbc.noaa.gov/station_page.php?station=51201, https://www.ndbc.noaa.gov/station_page.php?station=51202
+satellite_urls = https://www.nhc.noaa.gov/satellite.php
+model_urls = https://www.pacioos.hawaii.edu/waves/model-hawaii/
+weather_station_urls = https://www.weather.gov/hfo/
+custom_data_directory = ./custom_data  # For user-provided files
+
+[assistants]
+# Persistence settings for assistants
+save_assistant_ids = true
+assistants_file = ./config/assistants.json
+
+[prompts]
+# Use prompts.json for customizable assistant instructions
+prompts_file = ./config/prompts.json
+
+[output_format]
+template_file = ./templates/forecast_template.md
+include_visuals = true
+
+[sources]
+enable_buoy = true
+enable_weather = true  
+enable_model = true
+enable_satellite = true
+
+[api_keys]
+# Additional API keys for data sources
+windy_key = your_windy_api_key
+ecmwf_key = your_ecmwf_api_key
+ecmwf_email = your_email@example.com
+stormglass_key = your_stormglass_api_key
+surfline_email = your_surfline_email
+surfline_password = your_surfline_password

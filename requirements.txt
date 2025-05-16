@@ -1,0 +1,11 @@
+openai
+aiohttp
+httpx
+requests
+configparser
+markdown
+weasyprint
+pillow
+python-dateutil
+pydantic
+tenacity
