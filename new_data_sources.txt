@@ -1,0 +1,21 @@
+Validated Data Sources for AI-Driven Surf Forecasting:
+	1.	https://ocean.weather.gov/Pac_tab.php
+NOAA Ocean Prediction Center – Pacific Marine forecasts, including surface analyses, wind and wave forecasts, and wave period forecasts.
+	2.	https://www.stormsurf.com/page2/links/pacwam.shtml
+Stormsurf – Pacific Wave Models (NOAA Wavewatch III) depicting current and forecast sea heights and wave periods.
+	3.	https://www.stormsurfing.com/cgi/display.cgi?a=npac_height
+Stormsurf – North Pacific Sea Height model providing visualizations of wave heights across the North Pacific.
+	4.	https://www.stormsurf.com/page2/links/pacslp.shtml
+Stormsurf – Pacific Surface Pressure models illustrating surface pressure patterns and precipitation, aiding in storm tracking.
+	5.	https://www.ndbc.noaa.gov/maps/North_Pacific.shtml
+NOAA National Data Buoy Center – Real-time buoy data for the North Pacific, including wave height, period, and wind information.
+	6.	https://www.pacioos.hawaii.edu/waves/
+Pacific Islands Ocean Observing System (PacIOOS) – Regional wave forecasts and real-time observations for Hawaii.
+	7.	https://www.nhc.noaa.gov/marine/?epac
+National Hurricane Center – Marine forecasts and analyses for the Eastern Pacific, including high seas forecasts and tropical cyclone information.
+	8.	https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/enso_advisory/ensodisc.shtml
+NOAA Climate Prediction Center – ENSO Diagnostic Discussions providing insights into El Niño/La Niña conditions affecting long-term wave patterns.
+	9.	https://www.stormsurfing.com/cgi/display.cgi?a=pac_per
+Stormsurf – Full Pacific Maximum Swell Period model showing swell periods across the Pacific Ocean.
+	10.	https://www.stormsurfing.com/cgi/display_alt.cgi?a=spac_precip
+Stormsurf – South Pacific Surface Pressure and Precipitation models aiding in the assessment of storm development and movement.
