@@ -21,8 +21,6 @@ from agents.buoy_agent import buoy_agent
 from agents.weather_agent import weather_agent
 from agents.model_agent import model_agent
 from agents.satellite_agent import satellite_agent
-from agents.opc_agent_temp import OPCAgent
-from agents.stormsurf_agent_temp import StormsurfAgent
 from logging_config import get_logger
 from failure_tracker import FailureTracker
 
@@ -116,18 +114,12 @@ class DataCollector:
         self.data_dir = config.get('general', 'data_directory')
         self.failure_tracker = FailureTracker()
         
-        # Available agents - both function-based and class-based
+        # Available agents
         self.agents = {
             'buoy': buoy_agent,
             'weather': weather_agent,
             'model': model_agent,
             'satellite': satellite_agent,
-        }
-        
-        # Class-based agents
-        self.class_agents = {
-            'opc': OPCAgent,
-            'stormsurf': StormsurfAgent,
         }
     
     async def collect_all(self, region: Optional[str] = None) -> Dict[str, Any]:
@@ -159,31 +151,21 @@ class DataCollector:
         async with aiohttp.ClientSession() as session:
             tasks = []
             
-            # Function-based agents
             for agent_name, agent_func in self.agents.items():
                 if self._is_agent_enabled(agent_name):
                     logger.info(f"Dispatching {agent_name} agent")
                     task = self._run_agent(agent_name, agent_func, ctx, session, bundle_path)
                     tasks.append(task)
             
-            # Class-based agents
-            for agent_name, agent_class in self.class_agents.items():
-                if self._is_agent_enabled(agent_name):
-                    logger.info(f"Dispatching {agent_name} agent")
-                    agent = agent_class()
-                    task = self._run_class_agent(agent_name, agent, ctx, session, bundle_path)
-                    tasks.append(task)
-            
             # Wait for all agents to complete
-            all_agent_names = list(self.agents.keys()) + list(self.class_agents.keys())
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # Log results
-            for agent_name, result in zip(all_agent_names, results):
+            for agent_name, result in zip(self.agents.keys(), results):
                 if isinstance(result, Exception):
                     logger.error(f"Agent {agent_name} failed: {result}")
                 else:
-                    logger.info(f"Agent {agent_name} uploaded {len(result) if result else 0} files")
+                    logger.info(f"Agent {agent_name} uploaded {len(result)} files")
         
         # Create bundle summary
         bundle_info = {
@@ -213,7 +195,7 @@ class DataCollector:
     
     async def _run_agent(self, agent_name: str, agent_func, ctx, session, bundle_path) -> List[str]:
         """
-        Run a single function-based agent and upload its data.
+        Run a single agent and upload its data.
         
         Args:
             agent_name: Name of the agent
@@ -231,50 +213,6 @@ class DataCollector:
             
             # Upload files through the adapter
             return self.file_adapter.add_agent_data(agent_name, metadata_list, bundle_path)
-            
-        except Exception as e:
-            logger.error(f"Error running agent {agent_name}: {e}")
-            # Track the failure
-            self.failure_tracker.log_failure(
-                source=agent_name,
-                url="agent_execution",
-                error=str(e),
-                agent=agent_name
-            )
-            return []
-    
-    async def _run_class_agent(self, agent_name: str, agent, ctx, session, bundle_path) -> List[str]:
-        """
-        Run a single class-based agent and upload its data.
-        
-        Args:
-            agent_name: Name of the agent
-            agent: Agent class instance
-            ctx: Collector context
-            session: aiohttp session
-            bundle_path: Path to bundle directory
-            
-        Returns:
-            List of uploaded file IDs
-        """
-        try:
-            # Run the agent's collect method
-            filename = await agent.collect()
-            
-            if filename and os.path.exists(filename):
-                # Get the file metadata
-                metadata = {
-                    'filename': os.path.basename(filename),
-                    'file_type': 'json',
-                    'agent': agent_name,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
-                
-                # Upload files through the adapter
-                return self.file_adapter.add_agent_data(agent_name, [metadata], bundle_path)
-            else:
-                logger.warning(f"No data collected from {agent_name}")
-                return []
             
         except Exception as e:
             logger.error(f"Error running agent {agent_name}: {e}")

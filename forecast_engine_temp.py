@@ -12,11 +12,16 @@ from datetime import datetime
 from assistants import AssistantManager, ThreadManager, FileManager
 from agents.file_adapter import FileAdapter
 from logging_config import get_logger
+# For PDF generation
+try:
+    from weasyprint import HTML
+    has_pdf_support = True
+except ImportError:
+    has_pdf_support = False
+    logger = get_logger(__name__)
+    logger.warning("WeasyPrint not installed. PDF generation will be disabled.")
 
 logger = get_logger(__name__)
-
-# For PDF generation - disabled due to missing system libraries
-has_pdf_support = False
 
 
 class ForecastEngine:
@@ -398,7 +403,6 @@ Please consider the data quality issues and recommendations mentioned in the ass
         pdf_filepath = None
         if has_pdf_support:
             try:
-                from weasyprint import HTML
                 pdf_filename = f"{base_filename}.pdf"
                 pdf_filepath = os.path.join(output_dir, pdf_filename)
                 HTML(string=html_content).write_pdf(pdf_filepath)

@@ -135,8 +135,8 @@ def run_forecast(assistant_manager, thread_manager, file_manager,
     
     # Get assessment report
     assessment_report = data_assessment.assess_bundle(
-        file_ids=bundle_metadata['file_ids'],
-        bundle_info=bundle_metadata['bundle_info']
+        file_ids=bundle_metadata.get('file_ids', []),
+        bundle_info=bundle_metadata.get('bundle_info', {})
     )
     
     shores = config['general']['shores'].split(',') if not shore else [shore]
@@ -146,7 +146,7 @@ def run_forecast(assistant_manager, thread_manager, file_manager,
         logger.info(f"Generating forecast for {shore}")
         
         # Get relevant files for this shore
-        file_ids = bundle_metadata['file_ids']  # TODO: Filter by shore
+        file_ids = bundle_metadata.get('file_ids', [])  # TODO: Filter by shore
         
         # Generate forecast
         forecast_result = forecast_engine.generate_forecast(
@@ -181,7 +181,7 @@ def run_full_pipeline(assistant_manager, thread_manager, file_manager,
         logger.info(f"Generating forecast for {shore}")
         
         # Get relevant files for this shore
-        file_ids = bundle_metadata['file_ids']  # TODO: Filter by shore
+        file_ids = bundle_metadata.get('file_ids', [])  # TODO: Filter by shore
         
         # Generate forecast
         forecast_result = forecast_engine.generate_forecast(

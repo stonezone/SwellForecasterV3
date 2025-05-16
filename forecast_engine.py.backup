@@ -15,9 +15,6 @@ from logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# For PDF generation - disabled due to missing system libraries
-has_pdf_support = False
-
 
 class ForecastEngine:
     """
@@ -51,26 +48,6 @@ class ForecastEngine:
         
         # Get refinement cycles from config
         self.refinement_cycles = config.getint('general', 'refinement_cycles', fallback=2)
-        
-        # Load enhanced prompts if available
-        self.enhanced_prompts = self._load_enhanced_prompts()
-    
-    def _load_enhanced_prompts(self) -> Dict[str, Any]:
-        """Load enhanced prompts from prompts.json.example if available"""
-        try:
-            prompts_file = os.path.join(
-                os.path.dirname(__file__), 
-                'config', 
-                'prompts.json.example'
-            )
-            if os.path.exists(prompts_file):
-                with open(prompts_file, 'r') as f:
-                    return json.load(f)
-            else:
-                return {}
-        except Exception as e:
-            logger.warning(f"Could not load enhanced prompts: {e}")
-            return {}
     
     def generate_forecast(self, shore: str, file_ids: List[str],
                          assessment_report: Optional[str] = None) -> Dict[str, Any]:
@@ -94,7 +71,7 @@ class ForecastEngine:
         
         try:
             # Build initial forecast prompt
-            prompt = self._build_enhanced_forecast_prompt(shore, assessment_report)
+            prompt = self._build_forecast_prompt(shore, assessment_report)
             
             # Add message with data files - batch if more than 10
             # API limit is 10 attachments per message
@@ -179,9 +156,9 @@ class ForecastEngine:
             # Clean up thread
             self.thread_manager.delete_thread(forecast_thread_id)
     
-    def _build_enhanced_forecast_prompt(self, shore: str, assessment_report: Optional[str]) -> str:
+    def _build_forecast_prompt(self, shore: str, assessment_report: Optional[str]) -> str:
         """
-        Build an enhanced forecast prompt using prompts.json.example structure.
+        Build the initial forecast prompt.
         
         Args:
             shore: Shore name
@@ -190,70 +167,29 @@ class ForecastEngine:
         Returns:
             Formatted prompt string
         """
-        # Use enhanced prompts if available
-        if self.enhanced_prompts and 'forecast' in self.enhanced_prompts:
-            forecast_config = self.enhanced_prompts['forecast']
-            
-            # Get base intro
-            prompt = forecast_config.get('intro', '')
-            
-            # Add shore-specific emphasis
-            emphasis = ""
-            if 'North' in shore and 'north' in forecast_config.get('emphasis', {}):
-                emphasis = forecast_config['emphasis']['north']
-            elif 'South' in shore and 'south' in forecast_config.get('emphasis', {}):
-                emphasis = forecast_config['emphasis']['south']
-            else:
-                emphasis = forecast_config.get('emphasis', {}).get('both', '')
-            
-            # Add data sources summary
-            data_sources = forecast_config.get('data_sources', '')
-            
-            # Add structure guidelines
-            structure = forecast_config.get('structure', {})
-            structure_text = f"""
-            
-{structure.get('intro', '')}
-
-{structure.get('nowcast', '')}
-
-{structure.get('north_shore_priority' if 'North' in shore else 'south_shore_priority', structure.get('balanced', ''))}
-
-{structure.get('wingfoiling', '')}
-
-{structure.get('conclusion', '')}
-
-{structure.get('style', '')}
-            """
-            
-            # Compile full prompt
-            prompt = f"""{prompt}
-
-{emphasis}
-
-{data_sources}
-
-{structure_text}
-
-Generated at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
-Shore: {shore}
-"""
-        else:
-            # Fall back to original prompt
-            base_prompt = self.config.get('prompts', 'forecaster_prompt')
-            prompt = base_prompt.format(shore=shore)
+        # Get the base prompt from config
+        base_prompt = self.config.get('prompts', 'forecaster_prompt')
+        formatted_prompt = base_prompt.format(shore=shore)
         
         # Add assessment report if available
         if assessment_report:
-            prompt += f"""
+            formatted_prompt += f"""
             
-Data Assessment Report:
-{assessment_report}
-
-Please consider the data quality issues and recommendations mentioned in the assessment report when creating your forecast.
+            Data Assessment Report:
+            {assessment_report}
+            
+            Please consider the data quality issues and recommendations mentioned in the assessment report when creating your forecast.
             """
         
-        return prompt
+        # Add specific instructions for this run
+        formatted_prompt += f"""
+        
+        Please generate a detailed 10-day surf forecast for {shore} starting from today.
+        Include all required elements as specified in your instructions.
+        Be specific about swell heights, directions, periods, and local conditions.
+        """
+        
+        return formatted_prompt
     
     def _get_critique(self, forecast: str, shore: str) -> str:
         """
@@ -357,7 +293,7 @@ Please consider the data quality issues and recommendations mentioned in the ass
     
     def save_forecast(self, forecast_result: Dict[str, Any], output_dir: str) -> str:
         """
-        Save the forecast result to disk in multiple formats.
+        Save the forecast result to disk.
         
         Args:
             forecast_result: Complete forecast result dictionary
@@ -369,154 +305,25 @@ Please consider the data quality issues and recommendations mentioned in the ass
         # Create output directory if needed
         os.makedirs(output_dir, exist_ok=True)
         
-        # Generate filename base
+        # Generate filename
         shore_slug = forecast_result['shore'].replace(' ', '_').lower()
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        base_filename = f"{shore_slug}_forecast_{timestamp}"
         
         # Save JSON version
-        json_filename = f"{base_filename}.json"
+        json_filename = f"{shore_slug}_forecast_{timestamp}.json"
         json_filepath = os.path.join(output_dir, json_filename)
         with open(json_filepath, 'w') as f:
             json.dump(forecast_result, f, indent=2)
         
         # Save formatted Markdown version
-        md_filename = f"{base_filename}.md"
+        md_filename = f"{shore_slug}_forecast_{timestamp}.md"
         md_filepath = os.path.join(output_dir, md_filename)
         formatted_forecast = self.format_forecast_output(forecast_result)
         with open(md_filepath, 'w') as f:
             f.write(formatted_forecast)
         
-        # Save HTML version
-        html_filename = f"{base_filename}.html"
-        html_filepath = os.path.join(output_dir, html_filename)
-        html_content = self._generate_html_output(forecast_result)
-        with open(html_filepath, 'w') as f:
-            f.write(html_content)
-        
-        # Save PDF version if available
-        pdf_filepath = None
-        if has_pdf_support:
-            try:
-                from weasyprint import HTML
-                pdf_filename = f"{base_filename}.pdf"
-                pdf_filepath = os.path.join(output_dir, pdf_filename)
-                HTML(string=html_content).write_pdf(pdf_filepath)
-                logger.info(f"Generated PDF: {pdf_filepath}")
-            except Exception as e:
-                logger.error(f"Failed to generate PDF: {e}")
-                pdf_filepath = None
-        
-        logger.info(f"Saved forecast in multiple formats: {json_filepath}")
+        logger.info(f"Saved forecast to {json_filepath} and {md_filepath}")
         return json_filepath
-    
-    def _generate_html_output(self, forecast_result: Dict[str, Any]) -> str:
-        """
-        Generate HTML version of the forecast.
-        
-        Args:
-            forecast_result: Complete forecast result
-            
-        Returns:
-            HTML content
-        """
-        shore = forecast_result['shore']
-        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
-        final_forecast = forecast_result['final_forecast']
-        
-        # Convert markdown to basic HTML (simple implementation)
-        # In production, use a proper markdown to HTML converter
-        html_forecast = final_forecast.replace('\n', '<br>\n')
-        html_forecast = html_forecast.replace('# ', '<h1>')
-        html_forecast = html_forecast.replace('## ', '<h2>')
-        html_forecast = html_forecast.replace('### ', '<h3>')
-        html_forecast = html_forecast.replace('**', '<strong>')
-        html_forecast = html_forecast.replace('*', '<em>')
-        
-        html_content = f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hawaii Surf Forecast - {shore}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 20px;
-            line-height: 1.6;
-            color: #333;
-        }}
-        h1 {{
-            color: #0066cc;
-            border-bottom: 2px solid #0066cc;
-            padding-bottom: 10px;
-        }}
-        h2 {{
-            color: #0052a3;
-            margin-top: 30px;
-        }}
-        h3 {{
-            color: #004080;
-        }}
-        .metadata {{
-            background-color: #f5f5f5;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 20px 0;
-        }}
-        .forecast-table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-        }}
-        .forecast-table th, .forecast-table td {{
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
-        }}
-        .forecast-table th {{
-            background-color: #0066cc;
-            color: white;
-        }}
-        .forecast-table tr:nth-child(even) {{
-            background-color: #f9f9f9;
-        }}
-        .footer {{
-            margin-top: 50px;
-            padding-top: 20px;
-            border-top: 1px solid #ddd;
-            text-align: center;
-            color: #666;
-            font-size: 0.9em;
-        }}
-    </style>
-</head>
-<body>
-    <h1>Hawaii Surf Forecast - {shore}</h1>
-    
-    <div class="metadata">
-        <strong>Generated:</strong> {timestamp}<br>
-        <strong>Data Sources:</strong> {forecast_result.get('data_files', 0)} files analyzed<br>
-        <strong>Model Runs:</strong> {forecast_result.get('refinement_cycles', 2)} refinement cycles
-    </div>
-    
-    <div class="forecast-content">
-        {html_forecast}
-    </div>
-    
-    <div class="footer">
-        <p>Generated by SwellForecaster V3 - Emulating Pat Caldwell's legendary forecasting style</p>
-        <p>Surf forecasting involves inherent uncertainties. Always check current conditions 
-        and use appropriate safety precautions.</p>
-    </div>
-</body>
-</html>
-        """
-        
-        return html_content
     
     def format_forecast_output(self, forecast_result: Dict[str, Any]) -> str:
         """
@@ -563,7 +370,6 @@ and use appropriate safety precautions. This forecast is for informational purpo
 ---
 
 *Generated by SwellForecaster V3 - Emulating Pat Caldwell's legendary forecasting style*
-*Your Benevolent AI Overlords*
 """
         
         return output
