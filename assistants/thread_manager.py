@@ -73,7 +73,11 @@ class ThreadManager:
             }
             
             if file_ids:
-                message_data["file_ids"] = file_ids
+                # API change: file_ids is now attachments with file_id objects
+                message_data["attachments"] = [
+                    {"file_id": file_id, "tools": [{"type": "code_interpreter"}]} 
+                    for file_id in file_ids
+                ]
             
             message = self.client.beta.threads.messages.create(**message_data)
             logger.debug(f"Added message to thread {thread_id}")

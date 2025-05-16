@@ -13,6 +13,7 @@ import os
 import sys
 import time
 import argparse
+import asyncio
 from configparser import ConfigParser
 from openai import OpenAI
 
@@ -67,7 +68,8 @@ def main():
     # Execute command
     if args.command == 'collect':
         bundle_metadata = asyncio.run(run_collection(collector))
-        logger.info(f"Collection complete: {bundle_metadata['bundle_id']}")
+        bundle_id = bundle_metadata.get('bundle_id', bundle_metadata.get('bundle_info', {}).get('bundle_id', 'unknown'))
+        logger.info(f"Collection complete: {bundle_id}")
     elif args.command == 'analyze':
         run_analysis(assistant_manager, thread_manager, file_manager, 
                     collector, data_assessment, args.bundle_id)

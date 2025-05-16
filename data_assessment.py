@@ -37,6 +37,42 @@ class DataAssessment:
         if not self.assistant_id:
             raise ValueError("Data Assessment assistant not found")
     
+    def _add_message_with_files(self, thread_id: str, content: str, file_ids: List[str]):
+        """
+        Add message with files, handling the 10-attachment limit per message.
+        
+        Args:
+            thread_id: Thread ID
+            content: Message content  
+            file_ids: List of file IDs
+        """
+        # API limit is 10 attachments per message
+        if len(file_ids) <= 10:
+            self.thread_manager.add_message(
+                thread_id=thread_id,
+                content=content,
+                file_ids=file_ids
+            )
+        else:
+            # Send files in batches of 10
+            logger.info(f"Batching {len(file_ids)} files into multiple messages")
+            
+            # First message with initial prompt and first 10 files
+            self.thread_manager.add_message(
+                thread_id=thread_id,
+                content=content,
+                file_ids=file_ids[:10]
+            )
+            
+            # Subsequent messages with remaining files
+            for i in range(10, len(file_ids), 10):
+                batch = file_ids[i:i+10]
+                self.thread_manager.add_message(
+                    thread_id=thread_id,
+                    content=f"Additional data files (batch {i//10 + 1}):",
+                    file_ids=batch
+                )
+    
     def assess_bundle(self, file_ids: List[str], bundle_info: Dict[str, Any]) -> str:
         """
         Assess a data bundle for quality and consistency.
@@ -80,11 +116,7 @@ class DataAssessment:
             """
             
             # Add message with files
-            self.thread_manager.add_message(
-                thread_id=thread_id,
-                content=prompt,
-                file_ids=file_ids
-            )
+            self._add_message_with_files(thread_id, prompt, file_ids)
             
             # Run the assessment
             run_id = self.thread_manager.run_assistant(
@@ -145,11 +177,7 @@ class DataAssessment:
             """
             
             # Add message with files
-            self.thread_manager.add_message(
-                thread_id=thread_id,
-                content=prompt,
-                file_ids=file_ids
-            )
+            self._add_message_with_files(thread_id, prompt, file_ids)
             
             # Run the assessment
             run_id = self.thread_manager.run_assistant(
@@ -208,11 +236,7 @@ class DataAssessment:
             Provide a detailed comparison report.
             """
             
-            self.thread_manager.add_message(
-                thread_id=thread_id,
-                content=prompt,
-                file_ids=file_ids
-            )
+            self._add_message_with_files(thread_id, prompt, file_ids)
             
             run_id = self.thread_manager.run_assistant(
                 thread_id=thread_id,

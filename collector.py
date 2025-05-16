@@ -18,6 +18,9 @@ from configparser import ConfigParser
 
 from agents.file_adapter import FileAdapter
 from agents.buoy_agent import buoy_agent
+from agents.weather_agent import weather_agent
+from agents.model_agent import model_agent
+from agents.satellite_agent import satellite_agent
 from logging_config import get_logger
 from failure_tracker import FailureTracker
 
@@ -114,10 +117,9 @@ class DataCollector:
         # Available agents
         self.agents = {
             'buoy': buoy_agent,
-            # Add more agents here as they're created
-            # 'weather': weather_agent,
-            # 'model': model_agent,
-            # 'satellite': satellite_agent,
+            'weather': weather_agent,
+            'model': model_agent,
+            'satellite': satellite_agent,
         }
     
     async def collect_all(self, region: Optional[str] = None) -> Dict[str, Any]:
