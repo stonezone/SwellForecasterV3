@@ -56,8 +56,8 @@ def main():
     file_manager = FileManager(client)
     
     # Initialize data collection
-    file_adapter = FileAdapter(file_manager)
-    collector = DataCollector(config, file_adapter)
+    file_adapter = FileAdapter(config)
+    collector = DataCollector(config)
     
     # Initialize data assessment
     data_assessment = DataAssessment(assistant_manager, thread_manager, file_manager)
@@ -139,14 +139,14 @@ def run_forecast(assistant_manager, thread_manager, file_manager,
         bundle_info=bundle_metadata.get('bundle_info', {})
     )
     
-    shores = config['general']['shores'].split(',') if not shore else [shore]
+    shores = assistant_manager.config['general']['shores'].split(',') if not shore else [shore]
     
     for shore in shores:
         shore = shore.strip()
         logger.info(f"Generating forecast for {shore}")
         
         # Get relevant files for this shore
-        file_ids = bundle_metadata.get('file_ids', [])  # TODO: Filter by shore
+        file_ids = bundle_metadata.get('uploaded_file_ids', [])  # TODO: Filter by shore
         
         # Generate forecast
         forecast_result = forecast_engine.generate_forecast(
@@ -156,7 +156,7 @@ def run_forecast(assistant_manager, thread_manager, file_manager,
         )
         
         # Save forecast
-        output_dir = config.get('general', 'output_directory')
+        output_dir = assistant_manager.config.get('general', 'output_directory')
         forecast_path = forecast_engine.save_forecast(forecast_result, output_dir)
         logger.info(f"Saved {shore} forecast to {forecast_path}")
 
@@ -169,19 +169,19 @@ def run_full_pipeline(assistant_manager, thread_manager, file_manager,
     
     # Perform data assessment
     assessment_report = data_assessment.assess_bundle(
-        file_ids=bundle_metadata['file_ids'],
-        bundle_info=bundle_metadata['bundle_info']
+        file_ids=bundle_metadata.get('uploaded_file_ids', []),
+        bundle_info=bundle_metadata
     )
     
-    # Generate forecasts for all shores
-    shores = config['general']['shores'].split(',')
+    # Generate forecasts for all shores  
+    shores = assistant_manager.config['general']['shores'].split(',')
     
     for shore in shores:
         shore = shore.strip()
         logger.info(f"Generating forecast for {shore}")
         
         # Get relevant files for this shore
-        file_ids = bundle_metadata.get('file_ids', [])  # TODO: Filter by shore
+        file_ids = bundle_metadata.get('uploaded_file_ids', [])  # TODO: Filter by shore
         
         # Generate forecast
         forecast_result = forecast_engine.generate_forecast(
@@ -191,7 +191,7 @@ def run_full_pipeline(assistant_manager, thread_manager, file_manager,
         )
         
         # Save forecast
-        output_dir = config.get('general', 'output_directory')
+        output_dir = assistant_manager.config.get('general', 'output_directory')
         forecast_path = forecast_engine.save_forecast(forecast_result, output_dir)
         logger.info(f"Saved {shore} forecast to {forecast_path}")
     

@@ -1,8 +1,7 @@
 """
-Data Collector for SwellForecaster V3.
+Data Collector V4 for SwellForecaster V3.
 
-This module orchestrates data collection from various agents and uploads
-the data to the Assistants API.
+Final version with all corrected components.
 """
 
 import asyncio
@@ -16,15 +15,18 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from configparser import ConfigParser
 
-from agents.file_adapter import FileAdapter
+from agents.file_adapter_v3_temp import FileAdapter  # V3 with correct methods
 from agents.buoy_agent import buoy_agent
 from agents.weather_agent import weather_agent
 from agents.model_agent import model_agent
 from agents.satellite_agent import satellite_agent
 from agents.opc_agent_temp import OPCAgent
 from agents.stormsurf_agent_temp import StormsurfAgent
+from agents.nhc_agent_temp import NHCAgent
+from agents.enso_agent_v3_temp import ENSOAgent  # V3 with correct URLs
+from agents.ocean_weather_agent_v2_temp import OceanWeatherAgent  # V2 with correct URLs
 from logging_config import get_logger
-from failure_tracker import FailureTracker
+from failure_tracker_v2_temp import FailureTracker  # V2 with correct methods
 
 logger = get_logger(__name__)
 
@@ -46,55 +48,33 @@ class CollectorContext:
         self.cfg = config
         self.saved_files: List[str] = []
     
-    async def save(self, filename: str, content: Any) -> str:
+    async def save(self, filename: str, content: Any, binary: bool = False):
         """
         Save content to a file in the bundle directory.
         
         Args:
-            filename: Name of the file
-            content: Content to save (string or bytes)
-            
-        Returns:
-            Full path to the saved file
+            filename: Name of the file to save
+            content: Content to save (string, bytes, or JSON-serializable object)
+            binary: Whether to save as binary file
         """
-        file_path = os.path.join(self.bundle_path, filename)
+        filepath = os.path.join(self.bundle_path, filename)
         
         try:
-            # Create directory if needed
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            if binary:
+                mode = 'wb'
+                data = content if isinstance(content, bytes) else content.encode('utf-8')
+            else:
+                mode = 'w'
+                data = content
             
-            # Determine write mode
-            mode = 'wb' if isinstance(content, bytes) else 'w'
-            encoding = None if isinstance(content, bytes) else 'utf-8'
-            
-            # Save the file
-            with open(file_path, mode, encoding=encoding) as f:
-                f.write(content)
-            
-            self.saved_files.append(file_path)
-            logger.debug(f"Saved {filename} to {file_path}")
-            return file_path
+            with open(filepath, mode) as f:
+                f.write(data)
+                
+            self.saved_files.append(filename)
+            logger.info(f"Saved {'binary' if binary else 'text'} file: {filename}")
             
         except Exception as e:
-            logger.error(f"Error saving {filename}: {e}")
-            raise
-    
-    async def fetch(self, url: str, session: aiohttp.ClientSession) -> str:
-        """
-        Fetch content from a URL.
-        
-        Args:
-            url: URL to fetch
-            session: aiohttp client session
-            
-        Returns:
-            Response content as string
-        """
-        try:
-            async with session.get(url) as response:
-                return await response.text()
-        except Exception as e:
-            logger.error(f"Error fetching {url}: {e}")
+            logger.error(f"Error saving file {filename}: {str(e)}")
             raise
 
 
@@ -103,20 +83,24 @@ class DataCollector:
     Orchestrates data collection from multiple agents.
     """
     
-    def __init__(self, config: ConfigParser, file_adapter: FileAdapter):
+    def __init__(self, config: ConfigParser):
         """
-        Initialize the DataCollector.
+        Initialize the data collector.
         
         Args:
             config: Configuration object
-            file_adapter: FileAdapter for uploading to Assistants API
         """
         self.config = config
-        self.file_adapter = file_adapter
-        self.data_dir = config.get('general', 'data_directory')
+        self.file_adapter = FileAdapter(config)
         self.failure_tracker = FailureTracker()
         
-        # Available agents - both function-based and class-based
+        # Configuration for data collection
+        self.data_dir = self.config.get('paths', 'data_dir', fallback='./data')
+        self.bundle_retention_days = self.config.getint('data_collection', 
+                                                       'bundle_retention_days', 
+                                                       fallback=7)
+        
+        # Configure agents
         self.agents = {
             'buoy': buoy_agent,
             'weather': weather_agent,
@@ -124,216 +108,169 @@ class DataCollector:
             'satellite': satellite_agent,
         }
         
-        # Class-based agents
+        # Class-based agents - Final versions with image support
         self.class_agents = {
             'opc': OPCAgent,
             'stormsurf': StormsurfAgent,
+            'nhc': NHCAgent,
+            'enso': ENSOAgent,  # V3 with correct URLs
+            'ocean_weather': OceanWeatherAgent,  # V2 with correct URLs
         }
+        
+        # Create data directory if it doesn't exist
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+    async def collect_from_agent(self, agent_name: str, agent, ctx: CollectorContext,
+                               session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
+        """
+        Collect data from a single agent.
+        
+        Args:
+            agent_name: Name of the agent
+            agent: Agent instance or function
+            ctx: Collector context
+            session: aiohttp session
+            
+        Returns:
+            List of metadata dictionaries
+        """
+        try:
+            logger.info(f"Collecting data from {agent_name} agent")
+            
+            # Handle both function-based and class-based agents
+            if hasattr(agent, 'collect'):
+                # Class-based agent
+                return await agent.collect(ctx, session)
+            else:
+                # Function-based agent
+                return await agent(ctx, session)
+                
+        except Exception as e:
+            error_msg = f"Error collecting from {agent_name}: {str(e)}"
+            logger.error(error_msg)
+            
+            # Track failure
+            self.failure_tracker.add_failure(
+                source=agent_name,
+                error_type=type(e).__name__,
+                message=str(e)
+            )
+            
+            return []
     
-    async def collect_all(self, region: Optional[str] = None) -> Dict[str, Any]:
+    async def collect_all(self, region: str = "North Pacific") -> Dict[str, Any]:
         """
         Collect data from all configured agents.
         
         Args:
-            region: Optional region to collect data for
+            region: Region for data collection
             
         Returns:
-            Bundle information including file IDs and metadata
+            Bundle information dictionary
         """
-        # Create bundle directory
-        bundle_id = uuid.uuid4().hex[:12]
-        timestamp = datetime.now(timezone.utc)
-        bundle_name = f"{bundle_id}_{int(timestamp.timestamp())}"
-        bundle_path = os.path.join(self.data_dir, bundle_name)
+        bundle_id = str(uuid.uuid4())
+        bundle_path = os.path.join(self.data_dir, bundle_id)
         os.makedirs(bundle_path, exist_ok=True)
         
-        logger.info(f"Starting data collection for bundle: {bundle_name}")
-        
-        # Create context for agents
         ctx = CollectorContext(bundle_path, self.config)
         
-        # Reset file adapter for new bundle
-        self.file_adapter.reset()
+        logger.info(f"Starting data collection for bundle {bundle_id}")
         
-        # Collect data from all agents
         async with aiohttp.ClientSession() as session:
+            # Create tasks for all agents
             tasks = []
             
             # Function-based agents
             for agent_name, agent_func in self.agents.items():
-                if self._is_agent_enabled(agent_name):
-                    logger.info(f"Dispatching {agent_name} agent")
-                    task = self._run_agent(agent_name, agent_func, ctx, session, bundle_path)
-                    tasks.append(task)
-            
-            # Class-based agents
+                if self.config.getboolean('agents', agent_name, fallback=True):
+                    tasks.append(self.collect_from_agent(agent_name, agent_func, ctx, session))
+                    
+            # Class-based agents with configuration
             for agent_name, agent_class in self.class_agents.items():
-                if self._is_agent_enabled(agent_name):
-                    logger.info(f"Dispatching {agent_name} agent")
-                    agent = agent_class()
-                    task = self._run_class_agent(agent_name, agent, ctx, session, bundle_path)
-                    tasks.append(task)
+                if self.config.getboolean('agents', agent_name, fallback=True):
+                    agent = agent_class(self.config)
+                    tasks.append(self.collect_from_agent(agent_name, agent, ctx, session))
             
-            # Wait for all agents to complete
-            all_agent_names = list(self.agents.keys()) + list(self.class_agents.keys())
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Run all agents concurrently
+            results = await asyncio.gather(*tasks)
             
-            # Log results
-            for agent_name, result in zip(all_agent_names, results):
-                if isinstance(result, Exception):
-                    logger.error(f"Agent {agent_name} failed: {result}")
-                else:
-                    logger.info(f"Agent {agent_name} uploaded {len(result) if result else 0} files")
+        # Flatten results and filter out empty lists
+        all_metadata = []
+        for result in results:
+            if result:
+                all_metadata.extend(result)
         
-        # Create bundle summary
-        bundle_info = {
-            'bundle_id': bundle_id,
-            'timestamp': timestamp.isoformat(),
-            'region': region or 'all',
-            'duration': time.time() - timestamp.timestamp()
-        }
+        # Calculate image statistics
+        total_images = 0
+        for metadata in all_metadata:
+            if metadata.get('includes_images'):
+                total_images += metadata.get('image_count', 0)
         
-        summary_file_id = self.file_adapter.create_bundle_summary(bundle_info)
-        
-        # Create final bundle metadata
+        # Create bundle metadata
         bundle_metadata = {
-            'bundle_info': bundle_info,
-            'summary_file_id': summary_file_id,
-            'file_ids': [m['file_id'] for m in self.file_adapter.bundle_metadata],
-            'bundle_path': bundle_path
+            'bundle_id': bundle_id,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'region': region,
+            'files': all_metadata,
+            'total_files': len(all_metadata),
+            'saved_files': ctx.saved_files,
+            'collection_stats': {
+                'total_agents': len(tasks),
+                'successful_agents': sum(1 for r in results if r),
+                'total_files': len(all_metadata),
+                'total_images': total_images,
+                'total_saved_files': len(ctx.saved_files)
+            }
         }
         
-        # Save local metadata file
-        metadata_path = os.path.join(bundle_path, 'metadata.json')
+        # Save bundle metadata
+        metadata_path = os.path.join(bundle_path, "bundle_metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(bundle_metadata, f, indent=2)
         
-        logger.info(f"Completed data collection: {len(bundle_metadata['file_ids'])} files")
+        # Upload to Assistants API
+        logger.info(f"Uploading {len(ctx.saved_files)} files to Assistants API")
+        file_ids = await self.file_adapter.upload_bundle(bundle_path, bundle_metadata)
+        
+        # Update bundle metadata with file IDs
+        bundle_metadata['uploaded_file_ids'] = file_ids
+        bundle_metadata['collection_stats']['uploaded_files'] = len(file_ids)
+        
+        # Save updated metadata
+        with open(metadata_path, 'w') as f:
+            json.dump(bundle_metadata, f, indent=2)
+        
+        # Save failure summary if there were any failures
+        failure_summary = self.failure_tracker.get_summary()
+        if failure_summary['total_failures'] > 0:
+            failure_path = os.path.join(bundle_path, "failure_summary.json")
+            self.failure_tracker.save_summary(failure_path)
+            
+        logger.info(f"Data collection complete. Bundle ID: {bundle_id}")
+        logger.info(f"Total files saved: {len(ctx.saved_files)}, Images: {total_images}")
+        logger.info(f"Uploaded to API: {len(file_ids)} files")
+        
         return bundle_metadata
     
-    async def _run_agent(self, agent_name: str, agent_func, ctx, session, bundle_path) -> List[str]:
+    def cleanup_old_bundles(self):
         """
-        Run a single function-based agent and upload its data.
-        
-        Args:
-            agent_name: Name of the agent
-            agent_func: Agent function to execute
-            ctx: Collector context
-            session: aiohttp session
-            bundle_path: Path to bundle directory
-            
-        Returns:
-            List of uploaded file IDs
+        Remove bundles older than retention period.
         """
         try:
-            # Run the agent
-            metadata_list = await agent_func(ctx, session)
+            cutoff_time = time.time() - (self.bundle_retention_days * 24 * 60 * 60)
             
-            # Upload files through the adapter
-            return self.file_adapter.add_agent_data(agent_name, metadata_list, bundle_path)
-            
-        except Exception as e:
-            logger.error(f"Error running agent {agent_name}: {e}")
-            # Track the failure
-            self.failure_tracker.log_failure(
-                source=agent_name,
-                url="agent_execution",
-                error=str(e),
-                agent=agent_name
-            )
-            return []
-    
-    async def _run_class_agent(self, agent_name: str, agent, ctx, session, bundle_path) -> List[str]:
-        """
-        Run a single class-based agent and upload its data.
-        
-        Args:
-            agent_name: Name of the agent
-            agent: Agent class instance
-            ctx: Collector context
-            session: aiohttp session
-            bundle_path: Path to bundle directory
-            
-        Returns:
-            List of uploaded file IDs
-        """
-        try:
-            # Run the agent's collect method
-            filename = await agent.collect()
-            
-            if filename and os.path.exists(filename):
-                # Get the file metadata
-                metadata = {
-                    'filename': os.path.basename(filename),
-                    'file_type': 'json',
-                    'agent': agent_name,
-                    'timestamp': datetime.now(timezone.utc).isoformat()
-                }
+            for item in os.listdir(self.data_dir):
+                item_path = os.path.join(self.data_dir, item)
                 
-                # Upload files through the adapter
-                return self.file_adapter.add_agent_data(agent_name, [metadata], bundle_path)
-            else:
-                logger.warning(f"No data collected from {agent_name}")
-                return []
-            
+                # Skip if not a directory
+                if not os.path.isdir(item_path):
+                    continue
+                
+                # Check if it's an old bundle
+                if os.path.getmtime(item_path) < cutoff_time:
+                    logger.info(f"Removing old bundle: {item}")
+                    import shutil
+                    shutil.rmtree(item_path)
+                    
         except Exception as e:
-            logger.error(f"Error running agent {agent_name}: {e}")
-            # Track the failure
-            self.failure_tracker.log_failure(
-                source=agent_name,
-                url="agent_execution",
-                error=str(e),
-                agent=agent_name
-            )
-            return []
-    
-    def _is_agent_enabled(self, agent_name: str) -> bool:
-        """
-        Check if an agent is enabled in configuration.
-        
-        Args:
-            agent_name: Name of the agent
-            
-        Returns:
-            True if agent is enabled
-        """
-        # Check for specific enable flags in config
-        enable_key = f"enable_{agent_name}"
-        if self.config.has_option('sources', enable_key):
-            return self.config.getboolean('sources', enable_key)
-        
-        # Default to enabled
-        return True
-    
-    def get_latest_bundle(self) -> Optional[Dict[str, Any]]:
-        """
-        Get the most recent data bundle.
-        
-        Returns:
-            Bundle metadata or None if no bundles exist
-        """
-        try:
-            # List all bundle directories
-            bundle_dirs = [
-                d for d in os.listdir(self.data_dir)
-                if os.path.isdir(os.path.join(self.data_dir, d))
-            ]
-            
-            if not bundle_dirs:
-                return None
-            
-            # Sort by timestamp (in directory name)
-            bundle_dirs.sort(reverse=True)
-            latest_dir = bundle_dirs[0]
-            
-            # Load metadata
-            metadata_path = os.path.join(self.data_dir, latest_dir, 'metadata.json')
-            if os.path.exists(metadata_path):
-                with open(metadata_path, 'r') as f:
-                    return json.load(f)
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting latest bundle: {e}")
-            return None
+            logger.error(f"Error cleaning up old bundles: {str(e)}")

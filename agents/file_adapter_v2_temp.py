@@ -1,7 +1,7 @@
 """
-File Adapter V3 for SwellForecaster V3.
+File Adapter V2 for SwellForecaster V3.
 
-Fixed to use the correct FileManager upload_file method.
+Enhanced to handle binary files (images) and improved file type detection.
 """
 
 import os
@@ -11,7 +11,6 @@ from typing import List, Dict, Any, Optional
 from configparser import ConfigParser
 from pathlib import Path
 from assistants.file_manager import FileManager
-from openai import OpenAI
 from logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -20,7 +19,7 @@ logger = get_logger(__name__)
 class FileAdapter:
     """
     Bridges the gap between existing agents and the Assistants API file system.
-    Fixed to use correct FileManager methods.
+    Enhanced to handle binary files like images.
     """
     
     def __init__(self, config: ConfigParser):
@@ -31,11 +30,7 @@ class FileAdapter:
             config: Configuration object
         """
         self.config = config
-        # Create OpenAI client
-        api_key = config.get('openai', 'api_key')
-        self.client = OpenAI(api_key=api_key)
-        # Create FileManager with client
-        self.file_manager = FileManager(self.client)
+        self.file_manager = FileManager(config)
         self.bundle_metadata: List[Dict[str, Any]] = []
     
     def is_binary_file(self, filename: str) -> bool:
@@ -66,10 +61,28 @@ class FileAdapter:
             File ID if successful, None otherwise
         """
         try:
-            # Use the synchronous upload_file method
-            file_id = self.file_manager.upload_file(filepath, purpose)
-            logger.info(f"Successfully uploaded {os.path.basename(filepath)} with ID: {file_id}")
-            return file_id
+            # Determine if file is binary
+            is_binary = self.is_binary_file(filepath)
+            
+            # Read file content appropriately
+            if is_binary:
+                with open(filepath, 'rb') as f:
+                    content = f.read()
+                logger.info(f"Uploading binary file: {os.path.basename(filepath)}")
+            else:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                logger.info(f"Uploading text file: {os.path.basename(filepath)}")
+            
+            # Upload to API
+            file_obj = await self.file_manager.create_file(content, purpose)
+            
+            if file_obj and hasattr(file_obj, 'id'):
+                logger.info(f"Successfully uploaded {os.path.basename(filepath)} with ID: {file_obj.id}")
+                return file_obj.id
+            else:
+                logger.error(f"Failed to get file ID for {filepath}")
+                return None
                 
         except Exception as e:
             logger.error(f"Error uploading file {filepath}: {str(e)}")
@@ -102,19 +115,14 @@ class FileAdapter:
             for filepath in all_files:
                 # Skip certain files
                 filename = os.path.basename(filepath)
-                
+                if filename in ['bundle_metadata.json', 'failure_summary.json']:
+                    continue
+                    
                 # Skip metadata files for images (they're included in the main data files)
                 if filename.endswith('_metadata.json') and any(
-                    part in filename.lower() for part in 
-                    ['sst_anomaly', 'subsurface', 'pacific_', 'trade_wind', 'ocean', 
-                     'surface', 'wave', 'wind', '500mb', 'satellite', 'ir']
+                    filename.startswith(img_name) for img_name in 
+                    ['sst_anomaly', 'subsurface', 'pacific_', 'trade_wind']
                 ):
-                    logger.info(f"Skipping image metadata file: {filename}")
-                    continue
-                
-                # Skip failure summary - it should be included in bundle metadata
-                if filename == 'failure_summary.json':
-                    logger.info(f"Skipping failure summary file: {filename}")
                     continue
                 
                 file_id = await self.upload_file(filepath)
@@ -129,15 +137,10 @@ class FileAdapter:
                         'is_binary': self.is_binary_file(filename),
                         'bundle_id': bundle_metadata.get('bundle_id')
                     })
-                    
-            # Upload the bundle metadata itself last
+            
+            # Upload the bundle metadata itself
             metadata_path = os.path.join(bundle_path, "bundle_metadata.json")
             if os.path.exists(metadata_path):
-                # Ensure the bundle metadata includes all file IDs
-                bundle_metadata['uploaded_file_ids'] = file_ids
-                with open(metadata_path, 'w') as f:
-                    json.dump(bundle_metadata, f, indent=2)
-                    
                 metadata_id = await self.upload_file(metadata_path)
                 if metadata_id:
                     file_ids.append(metadata_id)

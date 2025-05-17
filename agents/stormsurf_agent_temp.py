@@ -1,102 +1,110 @@
-"""Stormsurf data collection agent"""
+"""
+Stormsurf Agent for SwellForecasterV3.
+
+This agent collects wave model data and forecasts from Stormsurf/Stormsurfing,
+a popular surf forecasting website with detailed Pacific wave models.
+"""
+
 import asyncio
-import aiohttp
-import logging
-from typing import Dict, List, Any
-from datetime import datetime
-from bs4 import BeautifulSoup
-
+import aiohttp  
 import json
+from bs4 import BeautifulSoup
+from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Any
+from logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 
 class StormsurfAgent:
-    """Agent for collecting Stormsurf wave models and forecasts"""
+    """Agent for collecting Stormsurf wave model data"""
     
-    def __init__(self):
+    def __init__(self, config):
+        """Initialize the Stormsurf agent"""
+        self.config = config
         self.sources = {
-            "pacific_wave_models": "https://www.stormsurf.com/page2/links/pacwam.shtml",
-            "north_pacific_height": "https://www.stormsurfing.com/cgi/display.cgi?a=npac_height",
-            "pacific_surface_pressure": "https://www.stormsurf.com/page2/links/pacslp.shtml",
-            "pacific_period": "https://www.stormsurfing.com/cgi/display.cgi?a=pac_per",
-            "south_pacific_precip": "https://www.stormsurfing.com/cgi/display_alt.cgi?a=spac_precip"
+            'pacific_wave_models': 'https://www.stormsurf.com/page/data/nep.shtml',
+            'north_pacific_height': 'https://www.stormsurfing.com/swf/nph.html',
+            'pacific_surface_pressure': 'https://www.stormsurf.com/page/data/slp.shtml',
+            'pacific_period': 'https://www.stormsurfing.com/swf/npp.html',
+            'south_pacific_precip': 'https://www.stormsurfing.com/swf/spp.html'
         }
         
     async def fetch_data(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
-        """Fetch all Stormsurf data including models and charts"""
+        """Fetch wave model data from Stormsurf"""
         data = {
-            "source": "Stormsurf",
-            "collected_at": datetime.now().isoformat(),
-            "models": {},
-            "charts": {},
-            "analyses": {}
+            'timestamp': datetime.utcnow().isoformat(),
+            'source': 'Stormsurf',
+            'models': {},
+            'errors': []
         }
         
-        # Collect data from each source
         for source_name, url in self.sources.items():
             try:
                 logger.info(f"Fetching Stormsurf {source_name}")
-                async with session.get(url) as response:
+                async with session.get(url, timeout=10) as response:
                     if response.status == 200:
                         html = await response.text()
                         soup = BeautifulSoup(html, 'html.parser')
                         
-                        # Extract model images and links
-                        if source_name == "pacific_wave_models":
-                            data["models"]["ww3_heights"] = self._extract_ww3_models(soup)
-                        elif source_name == "north_pacific_height":
-                            data["models"]["npac_height"] = self._extract_model_images(soup)
-                        elif source_name == "pacific_surface_pressure":
-                            data["models"]["pressure"] = self._extract_pressure_models(soup)
-                        elif source_name == "pacific_period":
-                            data["models"]["swell_period"] = self._extract_model_images(soup)
-                        elif source_name == "south_pacific_precip":
-                            data["models"]["spac_precip"] = self._extract_model_images(soup)
-                            
-                        # Extract any text analysis
-                        text_content = self._extract_text_content(soup)
-                        if text_content:
-                            data["analyses"][source_name] = text_content
-                            
-                    else:
-                        logger.error(f"Failed to fetch {source_name}: {response.status}")
+                        # Extract model data based on source type
+                        model_data = {
+                            'url': url,
+                            'fetched_at': datetime.utcnow().isoformat()
+                        }
                         
+                        if 'wave' in source_name or 'height' in source_name:
+                            model_data['type'] = 'wave_height'
+                            model_data['models'] = self._extract_wave_models(soup)
+                        elif 'pressure' in source_name:
+                            model_data['type'] = 'surface_pressure'
+                            model_data['models'] = self._extract_pressure_models(soup)
+                        elif 'period' in source_name:
+                            model_data['type'] = 'wave_period'
+                            model_data['models'] = self._extract_wave_models(soup)
+                        elif 'precip' in source_name:
+                            model_data['type'] = 'precipitation'
+                            model_data['models'] = self._extract_pressure_models(soup)
+                            
+                        # Extract any image links for wave model graphics
+                        model_data['images'] = self._extract_model_images(soup)
+                        
+                        # Extract any text content or analysis
+                        model_data['analysis'] = self._extract_text_content(soup)
+                        
+                        data['models'][source_name] = model_data
+                        
+            except aiohttp.ClientError as e:
+                error_msg = f"Error fetching {source_name}: {str(e)}"
+                logger.error(error_msg)
+                data['errors'].append(error_msg)
             except Exception as e:
-                logger.error(f"Error fetching {source_name}: {str(e)}")
+                error_msg = f"Unexpected error with {source_name}: {str(e)}"
+                logger.error(error_msg) 
+                data['errors'].append(error_msg)
                 
         return data
         
-    def _extract_ww3_models(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        """Extract WaveWatch III model links"""
+    def _extract_wave_models(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
+        """Extract wave model links and info from page"""
         models = []
         try:
-            # Look for WW3 model links
+            # Look for model links in common patterns
             for link in soup.find_all('a'):
                 href = link.get('href')
                 text = link.text.strip()
                 
-                if href and 'ww3' in href.lower():
+                if href and ('model' in href.lower() or 'wave' in text.lower()):
                     model_info = {
                         "name": text,
                         "url": href if href.startswith('http') else f"https://www.stormsurf.com{href}",
-                        "type": "wave_height"
+                        "type": "wave_model"
                     }
-                    
-                    # Determine forecast hour from text
-                    if "00hr" in text.lower():
-                        model_info["forecast_hour"] = 0
-                    elif "24hr" in text.lower():
-                        model_info["forecast_hour"] = 24
-                    elif "48hr" in text.lower():
-                        model_info["forecast_hour"] = 48
-                    elif "72hr" in text.lower():
-                        model_info["forecast_hour"] = 72
-                        
                     models.append(model_info)
                     
         except Exception as e:
-            logger.error(f"Error extracting WW3 models: {str(e)}")
+            logger.error(f"Error extracting wave models: {str(e)}")
             
         return models
     
@@ -147,30 +155,57 @@ class StormsurfAgent:
         try:
             # Look for text in pre tags or specific divs
             for pre in soup.find_all('pre'):
-                text_content += pre.text + "\n\n"
+                text_content += pre.text.strip() + "\n\n"
                 
-            # Look for analysis text
-            for div in soup.find_all('div', class_=['analysis', 'forecast', 'commentary']):
-                text_content += div.text + "\n\n"
+            # Look for analysis divs
+            for div in soup.find_all('div', class_='analysis'):
+                text_content += div.text.strip() + "\n\n"
                 
         except Exception as e:
             logger.error(f"Error extracting text content: {str(e)}")
             
         return text_content.strip()
-    
-    async def collect(self) -> str:
-        """Main collection entry point"""
-        async with aiohttp.ClientSession() as session:
+        
+    async def collect(self, ctx, session: aiohttp.ClientSession) -> List[Dict[str, Any]]:
+        """
+        Collect Stormsurf wave model data.
+        
+        Args:
+            ctx: Context object with save() method
+            session: aiohttp client session
+            
+        Returns:
+            List of metadata dictionaries
+        """
+        metadata_list = []
+        
+        try:
+            # Fetch Stormsurf data
             data = await self.fetch_data(session)
             
-            # Save collected data
+            # Save collected data using the context save method
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"stormsurf_data_{timestamp}.json"
-            filepath = Path("data") / filename
-            filepath.parent.mkdir(exist_ok=True)
             
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
+            # Save using the context's save method (this saves to the bundle directory)
+            await ctx.save(filename, json.dumps(data, indent=2))
             
-            logger.info(f"Stormsurf data saved to {filepath}")
-            return str(filepath)
+            # Create metadata
+            metadata = {
+                'source': 'Stormsurf',
+                'type': 'wave_models',
+                'filename': filename,
+                'url': 'https://www.stormsurf.com',
+                'priority': 3,
+                'description': 'Stormsurf Pacific wave models and analysis',
+                'north_facing': True,
+                'south_facing': True
+            }
+            
+            metadata_list.append(metadata)
+            logger.info(f"Stormsurf data saved successfully")
+            
+        except Exception as e:
+            logger.error(f"Error in Stormsurf agent collection: {str(e)}")
+            
+        return metadata_list

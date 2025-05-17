@@ -14,6 +14,7 @@ output/
 custom_data/
 logs/
 api_debug.log
+depreciated
 
 # Configuration
 config/assistants.json
